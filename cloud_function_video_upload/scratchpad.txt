@@ -1,0 +1,35 @@
+gs://cloud-samples-data/video/googlework_short.mp4
+
+curl -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" $ENDPOINT -d '{"instances": [{"video": {"gcsUri": "gs://cloud-samples-data/video/googlework_short.mp4"}}]}'
+
+https://us-central1-videosearch-cloudspace.cloudfunctions.net/cloud_function_video_upload
+
+curl -X POST localhost:8080 -H "Content-Type: application/cloudevents+json"    -d '{
+"specversion" : "1.0",
+"type" : "example.com.cloud.event",
+"source" : "https://example.com/cloudevents/pull",
+"subject" : "123",
+"id" : "A234-1234-1234",
+"time" : "2018-04-05T17:31:00Z",
+"data" : {"input_bucket": "cloud-samples-data/video",
+            "parts_bucket":"videosearch_video_source_parts",
+            "output_bucket":"videosearch_embeddings",
+            "video_name": "googlework_short.mp4"}
+}'
+
+curl -X POST https://us-central1-videosearch-cloudspace.cloudfunctions.net/cloud_function_video_upload -H "Authorization: Bearer $(gcloud auth print-identity-token)" -H "Content-Type: application/cloudevents+json"    -d '{
+"specversion" : "1.0",
+"type" : "example.com.cloud.event",
+"source" : "https://example.com/cloudevents/pull",
+"subject" : "123",
+"id" : "A234-1234-1234",
+"time" : "2018-04-05T17:31:00Z",
+"data" : {"input_bucket": "cloud-samples-data/video",
+            "parts_bucket":"videosearch_video_source_parts",
+            "output_bucket":"videosearch_embeddings",
+            "video_name": "googlework_short.mp4"}
+}'
+
+cd ~/reverse-image-search/createAndUpsertEmbeddings
+
+gcloud functions deploy cloud_function_video_upload --gen2 --runtime=python311 --region=us-central1 --source=. --entry-point=main --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" --trigger-event-filters="bucket=videosearch_source_videos" --service-account=cloud-function-video-upload@videosearch-cloudspace.iam.gserviceaccount.com --memory=1G
