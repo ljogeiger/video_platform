@@ -15,7 +15,8 @@ import json
 import google.auth.transport.requests
 import math
 
-storage_client = storage.Client()
+storage_client = storage.Client(project="videosearch-cloudspace")
+storage_client_2 = storage.Client(project="geminipro-15") # need to upload to different project so Gemini 1.5 can access objects
 
 # change these
 PROJECT_NAME="videosearch-cloudspace"
@@ -120,8 +121,6 @@ def main(cloud_event: CloudEvent):
         storage_client.download_blob_to_file(f'gs://{input_bucket_name}/{input_video_name}',file_obj)
 
     vid = VideoFileClip(destination_file)
-    if vid: print("Vid Successful")
-    else: print("Vid Unsuccessful")
 
     # could upload directly in this function to save space.
     # Tradeoff is I might encounter function timeout because all files would be uploaded individually
@@ -135,6 +134,13 @@ def main(cloud_event: CloudEvent):
         blob_name_prefix=stripped_input_video_name
     )
 
+    results_2 = transfer_manager.upload_many_from_filenames(
+        bucket=storage_client_2.bucket("geminipro-15-video-source-parts"),
+        filenames=split_video_paths,
+        source_directory="",
+        blob_name_prefix=stripped_input_video_name
+    )
+
     for name, result in zip(split_video_paths, results):
         # The results list is either `None` or an exception for each filename in
         # the input list, in order.
@@ -143,6 +149,15 @@ def main(cloud_event: CloudEvent):
             print("Failed to upload {} due to exception: {}".format(name, result))
         else:
             print("Uploaded {} to {}.".format(name, parts_bucket_name))
+
+    for name, result in zip(split_video_paths, results_2):
+        # The results list is either `None` or an exception for each filename in
+        # the input list, in order.
+
+        if isinstance(result, Exception):
+            print("Failed to upload {} due to exception: {}".format(name, result))
+        else:
+            print("Uploaded {} to {}.".format(name, "geminipro-15-video-source-parts"))
 
     token = getToken()
 

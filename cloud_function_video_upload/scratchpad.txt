@@ -32,4 +32,4 @@ curl -X POST https://us-central1-videosearch-cloudspace.cloudfunctions.net/cloud
 
 cd ~/reverse-image-search/createAndUpsertEmbeddings
 
-gcloud functions deploy cloud_function_video_upload --gen2 --runtime=python311 --region=us-central1 --source=. --entry-point=main --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" --trigger-event-filters="bucket=videosearch_source_videos" --service-account=cloud-function-video-upload@videosearch-cloudspace.iam.gserviceaccount.com --memory=1G
+gcloud functions deploy cloud_function_video_upload --gen2 --runtime=python311 --region=us-central1 --source=. --entry-point=main --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" --trigger-event-filters="bucket=videosearch_source_videos" --service-account=cloud-function-video-upload@videosearch-cloudspace.iam.gserviceaccount.com --memory=4Gi --cpu=8 --timeout=240
