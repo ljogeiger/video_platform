@@ -5,6 +5,10 @@ import vertexai
 import math
 from vertexai.generative_models import GenerativeModel, Part
 from vertexai.vision_models import MultiModalEmbeddingModel
+import datetime
+import requests
+import base64
+import google.auth.transport.requests
 
 PROJECT_ID = "videosearch-cloudspace"
 REGION = "us-central1"
@@ -38,6 +42,17 @@ elif model_selection == "Gemini Pro Vision 1.0":
   vertexai.init(project="videosearch-cloudspace", location="us-central1")
   model_gem = GenerativeModel("gemini-1.0-pro-vision-001")
 
+# Function to get signed GCS urls
+def getSignedURL(filename, bucket, action):
+  blob = bucket.blob(filename)
+  url = blob.generate_signed_url(
+    expiration=datetime.timedelta(minutes=60),
+    method=action,
+    version="v4"
+  )
+  return url
+
+
 # Function to display videos in N columns
 def columnize_videos(result_list, num_col = 2):
   cols = st.columns(num_col)
@@ -46,8 +61,8 @@ def columnize_videos(result_list, num_col = 2):
       for col in range(num_col):
         item = row * num_col + col
         cols[col].text(result_list[item]["result"])
-        cols[col].video(result_list[item]["temp_file_name"], start_time=result_list[item]["start_sec"])
-        cols[col].text(f"Distance: {result_list[item]['distance']:.4f}")
+        cols[col].video(result_list[item]["signedURL"], start_time=result_list[item]["start_sec"])
+        cols[col].text(f"Similarity score: {result_list[item]['distance']:.4f}")
   except IndexError as e:
      print(f"Index out of bounds: {e}")
   return
@@ -60,33 +75,45 @@ def parse_neighbors(_neighbors):
   for n in range(len(neighbors)):
     start_sec = (int(neighbors[n].datapoint.datapoint_id.split("_")[-1]) - 1) * 5 # 5 because I set IntervalSecs on Embeddings API to 5. We generate an embedding vector for each 5 second interval
     video_name = "_".join(neighbors[n].datapoint.datapoint_id.split("_")[:-1]) # files stored in 2 minute segements in GCS
-    print(f"Downloading - Video Name: {video_name}")
-    print(f"Downloading - File Name: {neighbors[n].datapoint.datapoint_id}")
-    temp_file_name = f"/tmp/temp-{n}.mp4"
+    print(f"Getting Signed URL - Video Name: {video_name}")
 
-    with open(f'{temp_file_name}','wb') as file_obj:
-      storage_client.download_blob_to_file(f'gs://videosearch_video_source_parts/{video_name}',file_obj)
+    # Better than downloading to temp file in Cloud run b/c this makes a direct link to GCS (rather than having Cloud run be proxy)
+    signedURL = getSignedURL(video_name,
+                             storage_client.bucket("videosearch_video_source_parts"),
+                             "GET")
+
+    print(f"Received Signed URL: {signedURL}")
 
     d = {
       "result" : f"Result #{n+1}\nTimestamps:{start_sec}->{start_sec+5}\n{neighbors[n].datapoint.datapoint_id}", #5 because that's what I set IntervalSec in embeddings api call
       "gcs_file": f"{video_name}",
       "file": f"{neighbors[n].datapoint.datapoint_id}",
-      "temp_file_name" : temp_file_name,
       "start_sec": start_sec,
       "distance": neighbors[n].distance,
+      "signedURL": signedURL,
     }
     videos.append(d)
   return videos
-
 
 # Function to upload bytes object to GCS bucket
 def upload_video_file(uploaded_file, bucket_name):
 
   bucket = storage_client.bucket(bucket_name)
-  blob = bucket.blob(uploaded_file.name)
-  blob.upload_from_string(uploaded_file.read())
 
-  st.write("Upload Successful")
+  url = getSignedURL(uploaded_file.name, bucket, "PUT")
+  # blob.upload_from_string(uploaded_file.read())
+
+  print(f"Upload Signed URL: {url}")
+
+  encoded_content = base64.b64encode(uploaded_file.read()).decode("utf-8")
+
+  # Again leverage signed URLs here to circumvence Cloud Run's 32 MB upload limit
+  response = requests.put(url, encoded_content, headers={'Content-Type': 'video/mp4'})
+
+  if response.status_code == 200:
+    st.write("Upload Successful")
+  else:
+    st.write("Upload Unseccessful")
 
   return
 
@@ -333,16 +360,16 @@ if "neighbor_result" in st.session_state:
       if model_selection == "Gemini Pro Vision 1.5":
         gcs_uri_generate = f"gs://geminipro-15-video-source-parts/{neighbors[i]['gcs_file']}"
       elif model_selection == "Gemini Pro Vision 1.0": # TODO: model only response good"
-        gcs_uri_shot_list = f"gs://videosearch_video_source_parts/{neighbors[i]['gcs_file']}"
+        gcs_uri_generate = f"gs://videosearch_video_source_parts/{neighbors[i]['gcs_file']}"
       print(gcs_uri_generate)
       input_file_generate = [
         Part.from_uri(uri = gcs_uri_generate, mime_type="video/mp4"),
         final_prompt_generate]
       print(input_file_generate)
-      response_generate = model_gem.shot_list_content(input_file_generate,
+      response_generate = model_gem.generate_content(input_file_generate,
                                             generation_config=generation_config)
       print(response_generate)
-      st.write(response_generate)
+      st.write(response_generate.text)
       st.write(f"{i+1} button was clicked")
 
 
