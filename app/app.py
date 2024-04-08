@@ -9,6 +9,7 @@ import datetime
 import requests
 import base64
 import google.auth.transport.requests
+from google.auth import impersonated_credentials
 
 PROJECT_ID = "videosearch-cloudspace"
 REGION = "us-central1"
@@ -42,12 +43,31 @@ elif model_selection == "Gemini Pro Vision 1.0":
   vertexai.init(project="videosearch-cloudspace", location="us-central1")
   model_gem = GenerativeModel("gemini-1.0-pro-vision-001")
 
+def getCreds():
+  creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+  auth_req = google.auth.transport.requests.Request()
+  creds.refresh(auth_req)
+  return creds
+
 # Function to get signed GCS urls
 def getSignedURL(filename, bucket, action):
+
+  # creds = service_account.Credentials.from_service_account_file('./credentials.json')
+  creds = getCreds()
+
+  signing_credentials = impersonated_credentials.Credentials(
+    source_credentials= creds,
+    target_principal='videosearch-streamlit-frontend@videosearch-cloudspace.iam.gserviceaccount.com',
+    target_scopes='',
+    lifetime=500
+  )
+
   blob = bucket.blob(filename)
+
   url = blob.generate_signed_url(
     expiration=datetime.timedelta(minutes=60),
     method=action,
+    credentials=signing_credentials,
     version="v4"
   )
   return url
@@ -110,10 +130,11 @@ def upload_video_file(uploaded_file, bucket_name):
   # Again leverage signed URLs here to circumvence Cloud Run's 32 MB upload limit
   response = requests.put(url, encoded_content, headers={'Content-Type': 'video/mp4'})
 
+  #TODO: review. Returns unsuccessful upon success.
   if response.status_code == 200:
     st.write("Upload Successful")
   else:
-    st.write("Upload Unseccessful")
+    st.write("Upload Unsuccessful")
 
   return
 
@@ -416,4 +437,4 @@ uploaded_file = st.file_uploader("Choose a video...", type=["mp4"])
 upload_file_start = st.button("Upload File")
 
 if upload_file_start:
-    upload_video_file(uploaded_file=uploaded_file, bucket_name="videosearch_source_videos")
+    upload_video_file(uploaded_file=uploaded_file, bucket_name=VIDEO_SOURCE_BUCKET)
