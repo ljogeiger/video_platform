@@ -1,16 +1,10 @@
 import streamlit as st
 from google.cloud import aiplatform_v1
 from google.cloud import storage
-import vertexai,io
-import json
+import vertexai
 import math
 from vertexai.generative_models import GenerativeModel, Part
-from st_files_connection import FilesConnection
-
-from vertexai.vision_models import (
-    MultiModalEmbeddingModel,
-    MultiModalEmbeddingResponse,
-)
+from vertexai.vision_models import MultiModalEmbeddingModel
 
 PROJECT_ID = "videosearch-cloudspace"
 REGION = "us-central1"
@@ -113,25 +107,28 @@ st.title("FakeCompany - Video Platform")
 
 st.text("""
         Welcome to FakeCompany's Video Platform!
-        This application is meant to be you're go to destination for all
-        your video needs. Here are some things you can do:
+        This application is meant to be your go to destination for all
+        your video needs. This has externally and internally facing applications.
 
-          1. Similarity search through all videos in FakeCompany's database
+        Here are some pre-loaded videos you can find in this database with example search queries you can try:
+          - animals.mp4 (search for "tiger")
+          - chicago.mp4 (search fro "taxi")
+          - JaneGoodall.mp4 (search for "Jane Goodall")
+          - googlework_short.mp4 (search for "cow")
+          - hockey video (search for "ice")
+
+        You are not required to upload a video for the features below but you can.
+
+        Here are some things you can do:
+
+          1. Similarity search through all videos in FakeCompany's database (start here)
           2. Summarize video
           3. Generate analytical article based on video
           4. Ask questions of video
+          5. Upload a video file to database
         """)
 
 st.header("Similarity search through all videos in FakeCompany's database")
-
-
-# Perform upload
-
-uploaded_file = st.file_uploader("Choose a video...", type=["mp4"])
-upload_file_start = st.button("Upload File")
-
-if upload_file_start:
-    upload_video_file(uploaded_file=uploaded_file, bucket_name="videosearch_source_videos")
 
 #Search
 
@@ -184,8 +181,73 @@ if search_button and query:
   # Display content
   columnize_videos(result_list, num_col = 2)
 
+  # TODO: delete temp files. or make work without temp files?
+
+# Shot List
+
+st.header("Generate shot list from video")
+st.text("Click one of the buttons below to generate an shot list from the video.\nNOTE: Gemini Pro 1.0 does not work well for this task.")
+
+if "neighbor_result" in st.session_state:
+  neighbors = st.session_state["neighbor_result"] # need to store in session state because otherwises it's not accessible
+
+  # Allow the user to modify the prompt
+  if model_selection == "Gemini Pro Vision 1.5":
+        prompt_shot_list = f"You are tasked with generating a shot list for the attached video. A shot is a series of frames that runs for an uninterrupted period of time.A shot list is a document that maps out everything that will happen in a scene of a video. It describes each shot within the videoFor each shot, make sure to include:- A description- A timestamp for the duration of the shot- Shot type (close-up, wide-shot, etc)- Camera angle- Location- summary of audio contentYou must include each of the element for each shot in the video. If you are uncertain about one of the elements say you are uncertain and explain why."
+        generation_config = {
+                            "max_output_tokens": 4048,
+                            "temperature": 0.9,
+                            "top_p": 0.4
+                          }
+  elif model_selection == "Gemini Pro Vision 1.0":
+    # Pro 1.0 doesn't like many new line characters that exist in """blah blah""" format.
+    prompt_shot_list = f"""
+        You are tasked with generating a shot list for the attached video. A shot is a series of frames that runs for an uninterrupted period of time.
+        A shot list is a document that maps out everything that will happen in a scene of a video. It describes each shot within the video
+        For each shot, make sure to include:
+        - A description
+        - A timestamp for the duration of the shot
+        - Shot type (close-up, wide-shot, etc)
+        - Camera angle
+        - Location
+        You must include each of the element for each shot in the video. If you are uncertain about one of the elements say you are uncertain and explain why.
+        """
+    generation_config = {
+                        "max_output_tokens": 2048,
+                        "temperature": 1,
+                        "top_p": 0.4
+                      }
+
+  final_prompt_shot_list = st.text_area(label = "Prompt", value=prompt_shot_list, height=250)
+
+  buttons_shot_list = []
+  for i in range(TOP_N):
+    buttons_shot_list.append(st.button(f"Generate shot list from video: {neighbors[i]['result']}"))
+
+
+  for i, button_shot_list in enumerate(buttons_shot_list):
+    if button_shot_list:
+      if model_selection == "Gemini Pro Vision 1.5":
+        gcs_uri_shot_list = f"gs://geminipro-15-video-source-parts/{neighbors[i]['gcs_file']}"
+      elif model_selection == "Gemini Pro Vision 1.0": # TODO: model only response with "good"
+        gcs_uri_shot_list = f"gs://videosearch_video_source_parts/{neighbors[i]['gcs_file']}"
+
+      print(gcs_uri_shot_list)
+      input_file_shot_list = [
+        Part.from_uri(uri = gcs_uri_shot_list, mime_type="video/mp4"),
+        final_prompt_shot_list
+        ]
+      print(input_file_shot_list)
+      response_generate = model_gem.generate_content(input_file_shot_list,
+                                            generation_config=generation_config)
+      print(response_generate)
+      st.write(response_generate.text)
+      st.write(f"{i+1} button was clicked")
+
+# Summarize
+
 st.header("Summarize video")
-st.text("Click one of the buttons below to summarize the video.\nPro 1.5 will take timestamps into account. Pro 1.0 will not.")
+st.text("Click one of the buttons below to summarize the video. This will summarize the entire video.\nPro 1.5 will take timestamps into account and will only summarize the timestamp specified.\nPro 1.0 will not. Prompt is not editable.")
 
 if "neighbor_result" in st.session_state:
   neighbors = st.session_state["neighbor_result"] # need to store in session state because otherwises it's not accessible
@@ -212,7 +274,7 @@ if "neighbor_result" in st.session_state:
         prompt_summarize = f"Your job is to summarize the following video. Only mention events and items that occur in the video. Include an answer to the following question: Where does {query} surface in the video?"
         gcs_uri_summarize = f"gs://videosearch_video_source_parts/{neighbors[i]['gcs_file']}"
 
-      print(gcs_uri_summarize)
+      st.text_area(label = "Prompt", value = prompt_summarize, height = 250)
       input_file_summarize = [
         Part.from_uri(uri = gcs_uri_summarize, mime_type="video/mp4"),
         prompt_summarize
@@ -228,7 +290,7 @@ if "neighbor_result" in st.session_state:
       st.write(f"{i+1} button was clicked")
 
 st.header("Generate article from video")
-st.text("Click one of the buttons below to generate an article from the video.")
+st.text("Click one of the buttons below to generate an article from the video.\nPrompt is editable.")
 
 if "neighbor_result" in st.session_state:
   neighbors = st.session_state["neighbor_result"] # need to store in session state because otherwises it's not accessible
@@ -264,26 +326,23 @@ if "neighbor_result" in st.session_state:
 
   buttons_generate = []
   for i in range(TOP_N):
-    buttons_generate.append(st.button(f"Generate Article from video: {neighbors[i]['result']}"))
-
+    buttons_generate.append(st.button(f"Generate article from video: {neighbors[i]['result']}"))
 
   for i, button_generate in enumerate(buttons_generate):
     if button_generate:
       if model_selection == "Gemini Pro Vision 1.5":
         gcs_uri_generate = f"gs://geminipro-15-video-source-parts/{neighbors[i]['gcs_file']}"
-      elif model_selection == "Gemini Pro Vision 1.0": # TODO: model only response with "good"
-        gcs_uri_generate = f"gs://videosearch_video_source_parts/{neighbors[i]['gcs_file']}"
-
+      elif model_selection == "Gemini Pro Vision 1.0": # TODO: model only response good"
+        gcs_uri_shot_list = f"gs://videosearch_video_source_parts/{neighbors[i]['gcs_file']}"
       print(gcs_uri_generate)
       input_file_generate = [
         Part.from_uri(uri = gcs_uri_generate, mime_type="video/mp4"),
-        final_prompt_generate
-        ]
+        final_prompt_generate]
       print(input_file_generate)
-      response_generate = model_gem.generate_content(input_file_generate,
+      response_generate = model_gem.shot_list_content(input_file_generate,
                                             generation_config=generation_config)
       print(response_generate)
-      st.write(response_generate.text)
+      st.write(response_generate)
       st.write(f"{i+1} button was clicked")
 
 
@@ -322,4 +381,12 @@ if "neighbor_result" in st.session_state:
     response_generate = model_gem.generate_content(input_file_generate)
     st.write(response_generate.text)
 
+# this doesn't work on Cloud run
+st.header("Upload Video File")
+st.text("Upload a video file from your local machine to the video database")
 
+uploaded_file = st.file_uploader("Choose a video...", type=["mp4"])
+upload_file_start = st.button("Upload File")
+
+if upload_file_start:
+    upload_video_file(uploaded_file=uploaded_file, bucket_name="videosearch_source_videos")

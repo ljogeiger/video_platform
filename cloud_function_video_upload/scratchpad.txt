@@ -33,3 +33,9 @@ curl -X POST https://us-central1-videosearch-cloudspace.cloudfunctions.net/cloud
 cd ~/reverse-image-search/createAndUpsertEmbeddings
 
 gcloud functions deploy cloud_function_video_upload --gen2 --runtime=python311 --region=us-central1 --source=. --entry-point=main --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" --trigger-event-filters="bucket=videosearch_source_videos" --service-account=cloud-function-video-upload@videosearch-cloudspace.iam.gserviceaccount.com --memory=4Gi --cpu=8 --timeout=240
+
+videosearch-streamlit-frontend@videosearch-cloudspace.iam.gserviceaccount.com
+
+gcloud builds submit --region=us-central1 --tag us-central1-docker.pkg.dev/videosearch-cloudspace/videosearch-cloudspace-repo/streamlit-image:v0.1 .
+
+gcloud run deploy videosearch-streamlit-frontend --image us-central1-docker.pkg.dev/videosearch-cloudspace/videosearch-cloudspace-repo/streamlit-image:v0.1 --service-account videosearch-streamlit-frontend@videosearch-cloudspace.iam.gserviceaccount.com --memory=1Gi --cpu=2

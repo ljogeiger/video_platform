@@ -1,2 +1,4 @@
-st-files-connection
-gcsfs
+google-cloud-storage==2.9.0
+google-cloud-aiplatform==1.43.0
+google-cloud-vision
+streamlit==1.31.1
