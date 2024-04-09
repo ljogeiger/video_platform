@@ -89,7 +89,7 @@ def split_video_by_duration(
         output_filepath = output_filepath_template % part
         current_part.write_videofile(
             output_filepath,
-            audio = False # set this to True if you have audio files
+            audio = True # set this to True if you have audio files
             )
         output_filepaths.append(output_filepath)
 

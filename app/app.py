@@ -8,6 +8,7 @@ from vertexai.vision_models import MultiModalEmbeddingModel
 import datetime
 import requests
 import base64
+import json
 import google.auth.transport.requests
 from google.auth import impersonated_credentials
 
@@ -16,10 +17,11 @@ REGION = "us-central1"
 API_ENDPOINT="1949003250.us-central1-6255484976.vdb.vertexai.goog"
 INDEX_ENDPOINT="projects/6255484976/locations/us-central1/indexEndpoints/4956743553549074432"
 DEPLOYED_INDEX_ID="video_search_endpoint_1710342048921"
+INDEX_ID = "7673540028760326144"
 DEPLOYED_ENDPOINT_DISPLAY_NAME = "Video Search Endpoint"
-VIDEO_SOURCE_BUCKET = "videosearch-source-videos"
+VIDEO_SOURCE_BUCKET = "videosearch_source_videos"
 TOP_N = 4
-EMBEDDINGS_BUCKET = "videosearch-embeddings"
+EMBEDDINGS_BUCKET = "videosearch_embeddings"
 
 # Define storage client for file uploads
 storage_client = storage.Client(project=PROJECT_ID)
@@ -115,6 +117,13 @@ def parse_neighbors(_neighbors):
     videos.append(d)
   return videos
 
+#token for removing datapoints from vector search
+def getToken():
+  creds, _ = google.auth.default()
+  auth_req = google.auth.transport.requests.Request()
+  creds.refresh(auth_req)
+  return creds.token
+
 # Function to upload bytes object to GCS bucket
 def upload_video_file(uploaded_file, bucket_name):
 
@@ -125,17 +134,18 @@ def upload_video_file(uploaded_file, bucket_name):
 
   print(f"Upload Signed URL: {url}")
 
-  encoded_content = base64.b64encode(uploaded_file.read()).decode("utf-8")
+  # encoded_content = base64.b64encode(uploaded_file.read()).decode("utf-8")
 
   # Again leverage signed URLs here to circumvence Cloud Run's 32 MB upload limit
-  response = requests.put(url, encoded_content, headers={'Content-Type': 'video/mp4'})
+  response = requests.put(url, uploaded_file, headers={'Content-Type': 'video/mp4'})
 
   #TODO: review. Returns unsuccessful upon success.
+  print(response.status_code)
+  print(response.reason)
   if response.status_code == 200:
-    st.write("Upload Successful")
+    st.write("Success")
   else:
-    st.write("Upload Unsuccessful")
-
+    st.write(f"Error in uploading content: {response.status_code} {response.reason} {response.text}")
   return
 
 # Function to get embedding from query text
@@ -151,10 +161,10 @@ def get_query_embedding(query):
   return query_embedding
 
 
-st.title("FakeCompany - Video Platform")
+st.title("Cymbal AI - Video Platform")
 
 st.text("""
-        Welcome to FakeCompany's Video Platform!
+        Welcome to Cymbal AI's Video Platform!
         This application is meant to be your go to destination for all
         your video needs. This has externally and internally facing applications.
 
@@ -169,14 +179,14 @@ st.text("""
 
         Here are some things you can do:
 
-          1. Similarity search through all videos in FakeCompany's database (start here)
+          1. Similarity search through all videos in Cymbal AI's database (start here)
           2. Summarize video
           3. Generate analytical article based on video
           4. Ask questions of video
           5. Upload a video file to database
         """)
 
-st.header("Similarity search through all videos in FakeCompany's database")
+st.header("Similarity search through all videos in Cymbal AI's database")
 
 #Search
 
@@ -227,9 +237,10 @@ if search_button and query:
   st.session_state["neighbor_result"] = result_list
 
   # Display content
-  columnize_videos(result_list, num_col = 2)
+  # columnize_videos(result_list, num_col = 2)
 
-  # TODO: delete temp files. or make work without temp files?
+if "neighbor_result" in st.session_state:
+  columnize_videos(st.session_state["neighbor_result"], num_col = 2)
 
 # Shot List
 
@@ -438,3 +449,42 @@ upload_file_start = st.button("Upload File")
 
 if upload_file_start:
     upload_video_file(uploaded_file=uploaded_file, bucket_name=VIDEO_SOURCE_BUCKET)
+
+
+st.title("Delete Video")
+st.write("Enter the source video below and it will delete embeddings in Vector Search source video.")
+
+video_name = st.text_input("Enter video name without GCS uri path.")
+delete_button = st.button("Delete")
+
+def delete_video(video_name):
+
+
+  blobs = storage_client.list_blobs(EMBEDDINGS_BUCKET, prefix=f"{video_name}/tmp")
+
+  blob_list = []
+  for blob in blobs:
+    blob_list.append(blob.name.replace('.json',''))
+
+  print(f"Deleting...{blob_list}")
+
+  response = requests.post(
+    url = f"https://{REGION}-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/{REGION}/indexes/{INDEX_ID}:removeDatapoints",
+    json={
+      "datapoint_ids": blob_list
+    },
+    headers={
+      'Content-Type': 'application/json',
+      "Authorization": f"Bearer {getToken()}"
+    }
+  )
+
+  if response.status_code == 200:
+    st.write("Deletion successful")
+  else:
+    st.write(f"Deletion unsuccessful: {response.status_code} {response.text}")
+
+  return
+
+if video_name and delete_button:
+  delete_video(video_name)
