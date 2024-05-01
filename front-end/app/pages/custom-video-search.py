@@ -3,14 +3,11 @@ from google.cloud import aiplatform_v1
 from google.cloud import storage
 import vertexai
 import math
+import utils
 from vertexai.generative_models import GenerativeModel, Part
 from vertexai.vision_models import MultiModalEmbeddingModel
-import datetime
 import requests
-import base64
-import json
-import google.auth.transport.requests
-from google.auth import impersonated_credentials
+from st_pages import Page, show_pages, add_page_title
 
 PROJECT_ID = "videosearch-cloudspace"
 REGION = "us-central1"
@@ -23,16 +20,22 @@ VIDEO_SOURCE_BUCKET = "videosearch_source_videos"
 TOP_N = 4
 EMBEDDINGS_BUCKET = "videosearch_embeddings"
 
+show_pages(
+  [
+    Page("Home.py", "Home"),
+    Page("pages/custom-video-search.py","Custom Video Search"),
+    Page("pages/managed-video-search.py","Managed Video Search"),
+  ]
+)
+
 # Define storage client for file uploads
 storage_client = storage.Client(project=PROJECT_ID)
 
-# My Gemini 1.5 Pro model is in a different project.
-# Need to init on geminipro1-5 project in Argolis
 with st.sidebar:
   model_selection = st.radio(
     "Which Gemini model?",
-    options = ["Gemini Pro Vision 1.0", "Gemini Pro Vision 1.5"],
-    captions = ["","Rate limited at 5 QPM"]
+    options = ["Gemini Pro Vision 1.5", "Gemini Pro Vision 1.0"],
+    captions = ["Rate limited at 5 QPM", ""],
     )
 
 # Logic to select the model. Gemini 1.5 is in different project
@@ -40,59 +43,16 @@ with st.sidebar:
 # Cloud Function uploads video parts to both buckets
 if model_selection == "Gemini Pro Vision 1.5":
   vertexai.init(project="geminipro1-5", location="us-central1")
-  model_gem = GenerativeModel("gemini-1.5-pro-preview-0215")
+  model_gem = GenerativeModel("gemini-1.5-pro-preview-0409")
 elif model_selection == "Gemini Pro Vision 1.0":
   vertexai.init(project="videosearch-cloudspace", location="us-central1")
   model_gem = GenerativeModel("gemini-1.0-pro-vision-001")
 
-def getCreds():
-  creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
-  auth_req = google.auth.transport.requests.Request()
-  creds.refresh(auth_req)
-  return creds
-
-# Function to get signed GCS urls
-def getSignedURL(filename, bucket, action):
-
-  # creds = service_account.Credentials.from_service_account_file('./credentials.json')
-  creds = getCreds()
-
-  signing_credentials = impersonated_credentials.Credentials(
-    source_credentials= creds,
-    target_principal='videosearch-streamlit-frontend@videosearch-cloudspace.iam.gserviceaccount.com',
-    target_scopes='',
-    lifetime=500
-  )
-
-  blob = bucket.blob(filename)
-
-  url = blob.generate_signed_url(
-    expiration=datetime.timedelta(minutes=60),
-    method=action,
-    credentials=signing_credentials,
-    version="v4"
-  )
-  return url
-
-
-# Function to display videos in N columns
-def columnize_videos(result_list, num_col = 2):
-  cols = st.columns(num_col)
-  try:
-    for row in range(math.ceil(len(result_list) / num_col)):
-      for col in range(num_col):
-        item = row * num_col + col
-        cols[col].text(result_list[item]["result"])
-        cols[col].video(result_list[item]["signedURL"], start_time=result_list[item]["start_sec"])
-        cols[col].text(f"Similarity score: {result_list[item]['distance']:.4f}")
-  except IndexError as e:
-     print(f"Index out of bounds: {e}")
-  return
 
 
 # Function to parse findNeighbors result
 # OUT: list of neighbor dicts
-def parse_neighbors(_neighbors):
+def parse_neighbors(neighbors):
   videos = []
   for n in range(len(neighbors)):
     start_sec = (int(neighbors[n].datapoint.datapoint_id.split("_")[-1]) - 1) * 5 # 5 because I set IntervalSecs on Embeddings API to 5. We generate an embedding vector for each 5 second interval
@@ -100,7 +60,7 @@ def parse_neighbors(_neighbors):
     print(f"Getting Signed URL - Video Name: {video_name}")
 
     # Better than downloading to temp file in Cloud run b/c this makes a direct link to GCS (rather than having Cloud run be proxy)
-    signedURL = getSignedURL(video_name,
+    signedURL = utils.getSignedURL(video_name,
                              storage_client.bucket("videosearch_video_source_parts"),
                              "GET")
 
@@ -117,19 +77,12 @@ def parse_neighbors(_neighbors):
     videos.append(d)
   return videos
 
-#token for removing datapoints from vector search
-def getToken():
-  creds, _ = google.auth.default()
-  auth_req = google.auth.transport.requests.Request()
-  creds.refresh(auth_req)
-  return creds.token
-
 # Function to upload bytes object to GCS bucket
 def upload_video_file(uploaded_file, bucket_name):
 
   bucket = storage_client.bucket(bucket_name)
 
-  url = getSignedURL(uploaded_file.name, bucket, "PUT")
+  url = utils.getSignedURL(uploaded_file.name, bucket, "PUT")
   # blob.upload_from_string(uploaded_file.read())
 
   print(f"Upload Signed URL: {url}")
@@ -160,37 +113,11 @@ def get_query_embedding(query):
   query_embedding = embedding.text_embedding
   return query_embedding
 
-
-st.title("Cymbal AI - Video Platform")
-
-st.text("""
-        Welcome to Cymbal AI's Video Platform!
-        This application is meant to be your go to destination for all
-        your video needs. This has externally and internally facing applications.
-
-        Here are some pre-loaded videos you can find in this database with example search queries you can try:
-          - animals.mp4 (search for "tiger")
-          - chicago.mp4 (search fro "taxi")
-          - JaneGoodall.mp4 (search for "Jane Goodall")
-          - googlework_short.mp4 (search for "cow")
-          - hockey video (search for "ice")
-
-        You are not required to upload a video for the features below but you can.
-
-        Here are some things you can do:
-
-          1. Similarity search through all videos in Cymbal AI's database (start here)
-          2. Summarize video
-          3. Generate analytical article based on video
-          4. Ask questions of video
-          5. Upload a video file to database
-        """)
-
 st.header("Similarity search through all videos in Cymbal AI's database")
 
 #Search
 
-query = st.text_input("Video Search", key="query")
+query = st.text_input("Custome Video Search (ex. Tiger Walking)", key="query")
 search_button = st.button("Search")
 
 result_list = []
@@ -240,7 +167,7 @@ if search_button and query:
   # columnize_videos(result_list, num_col = 2)
 
 if "neighbor_result" in st.session_state:
-  columnize_videos(st.session_state["neighbor_result"], num_col = 2)
+  utils.columnize_videos(st, st.session_state["neighbor_result"], num_col = 2)
 
 # Shot List
 
@@ -475,7 +402,7 @@ def delete_video(video_name):
     },
     headers={
       'Content-Type': 'application/json',
-      "Authorization": f"Bearer {getToken()}"
+      "Authorization": f"Bearer {utils.getToken()}"
     }
   )
 
