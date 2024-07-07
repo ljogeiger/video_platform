@@ -27,8 +27,8 @@ INDEX_DISPLAY_NAME = "Demo Index"
 INDEX_ENDPOINT_DISPLAY_NAME = "Demo Index Endpoint"
 CORPUS_DISPLAY_NAME = "Demo corpus"
 CORPUS_ID = "1678845387635490856"
-INDEX_ENDPOINT_ID = "ie-11238129484039202512"
-DEPLOYED_INDEX_ID = "index-16767898686074057306"
+INDEX_ENDPOINT_ID = "ie-4504795562690827196"
+DEPLOYED_INDEX_ID = "index-2722830910301969802"
 
 # Warehouse Client setup
 warehouse_endpoint = channel.get_warehouse_service_endpoint(channel.Environment[ENV])
@@ -42,14 +42,15 @@ corpus_name = visionai_v1.WarehouseClient.corpus_path(
 
 
 index_name = "{}/indexes/{}".format(corpus_name, DEPLOYED_INDEX_ID)
+print(index_name)
 index = warehouse_client.get_index(visionai_v1.GetIndexRequest(name=index_name))
 index_endpoint_name = index.deployed_indexes[0].index_endpoint
 
 show_pages(
   [
-    Page("Home.py", "Home"),
-    Page("pages/custom-video-search.py","Custom Video Search"),
-    Page("pages/managed-video-search.py","Managed Video Search"),
+    Page("app/home.py", "Home"),
+    Page("app/pages/custom-video-search.py","Custom Video Search"),
+    Page("app/pages/managed-video-search.py","Managed Video Search"),
   ]
 )
 
